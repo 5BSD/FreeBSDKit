@@ -1,0 +1,4 @@
+module CNetmap [system] {
+    header "include/cnetmap.h"
+    export *
+}

@@ -82,6 +82,10 @@ let package = Package(
             name: "AgeSignal",
             targets: ["AgeSignal"]
         ),
+        .library(
+            name: "Netmap",
+            targets: ["Netmap"]
+        ),
         .executable(
             name: "maclabel",
             targets: ["maclabel"]
@@ -113,6 +117,10 @@ let package = Package(
         .executable(
             name: "kqueue-demo",
             targets: ["kqueue-demo"]
+        ),
+        .executable(
+            name: "netmap-demo",
+            targets: ["netmap-demo"]
         )
     ],
     dependencies: [
@@ -167,6 +175,10 @@ let package = Package(
         .target(
             name: "CDeviceIoctl",
             path: "Sources/CDeviceIoctl"
+        ),
+        .target(
+            name: "CNetmap",
+            path: "Sources/CNetmap"
         ),
         .target(
             name: "CCasper",
@@ -355,9 +367,17 @@ let package = Package(
             name: "AgeSignal",
             dependencies: ["FreeBSDKit", "FPC", "Descriptors", "Capabilities"]
         ),
+        .target(
+            name: "Netmap",
+            dependencies: ["CNetmap", "FreeBSDKit"]
+        ),
         .testTarget(
             name: "AgeSignalTests",
             dependencies: ["AgeSignal"]
+        ),
+        .testTarget(
+            name: "NetmapTests",
+            dependencies: ["Netmap"]
         ),
         .executableTarget(
             name: "maclabel",
@@ -432,6 +452,11 @@ let package = Package(
             name: "kqueue-demo",
             dependencies: ["Capabilities", "Descriptors", "SignalDispatchers", "FreeBSDKit"],
             path: "Examples/KqueueDemo"
+        ),
+        .executableTarget(
+            name: "netmap-demo",
+            dependencies: ["Netmap", "FreeBSDKit"],
+            path: "Examples/NetmapDemo"
         ),
     ]
 )
