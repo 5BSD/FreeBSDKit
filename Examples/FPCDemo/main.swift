@@ -29,6 +29,8 @@ extension MessageID {
     static let credentialsReply = MessageID(rawValue: 113)
     static let clientIdentify = MessageID(rawValue: 114)
     static let identifyReply = MessageID(rawValue: 115)
+    static let getMessageCredentials = MessageID(rawValue: 116)
+    static let messageCredentialsReply = MessageID(rawValue: 117)
 }
 
 // MARK: - Logging
@@ -136,8 +138,9 @@ struct BPCTestHarness {
               3. Multi-Descriptor  - Pass multiple file descriptors
               4. Unsolicited Msgs  - Fire-and-forget messages via messages() stream
               5. Reply Isolation   - Replies don't leak into messages() stream
-              6. Peer Credentials  - Retrieve UID/GID/PID of connected peer
-              7. Multi-Client      - Multiple concurrent clients
+              6. Peer Credentials  - Retrieve UID/GID/PID of connected peer (LOCAL_PEERCRED)
+              7. Message Creds     - Per-message credentials (LOCAL_CREDS_PERSISTENT)
+              8. Multi-Client      - Multiple concurrent clients
             """)
     }
 
@@ -252,9 +255,56 @@ struct BPCTestHarness {
             await endpointB.stop()
             log("Endpoints A,B closed")
 
-            // --- Test 3: Data integrity with large payload (fresh pair) ---
+            // --- Test 3: Per-message credentials via socketpair ---
             log("")
-            log("┌─ Test 3: Large Payload (64KB pattern) ─┐")
+            log("┌─ Test 3: Per-Message Credentials (socketpair) ─┐")
+            do {
+                let (epA, epB) = try FPCEndpoint.pair()
+                await epA.start()
+                await epB.start()
+
+                log("│ A → sending message, B checks credentials")
+
+                let checkTask = Task {
+                    let stream = try await epB.incoming()
+                    for await msg in stream {
+                        if let creds = msg.senderCredentials {
+                            log("│ B ← received message with credentials:")
+                            log("│     ruid=\(creds.realUID), euid=\(creds.effectiveUID), pid=\(creds.pid)")
+                            // Verify credentials match our process
+                            let myUID = getuid()
+                            let myPID = getpid()
+                            return creds.realUID == myUID && creds.pid == myPID
+                        } else {
+                            log("│ B ← received message WITHOUT credentials")
+                            return false
+                        }
+                    }
+                    return false
+                }
+
+                try await epA.send(FPCMessage(id: .echo, payload: Data("creds-test".utf8)))
+                let valid = try await checkTask.value
+
+                log("│ Closing test endpoints...")
+                await epA.stop()
+                await epB.stop()
+
+                if valid {
+                    log("└ ✓ PASS: Per-message credentials delivered correctly")
+                    passed += 1
+                } else {
+                    log("└ ✗ FAIL: Credentials missing or incorrect")
+                    failed += 1
+                }
+            } catch {
+                log("└ ✗ FAIL: \(error)")
+                failed += 1
+            }
+
+            // --- Test 4: Data integrity with large payload (fresh pair) ---
+            log("")
+            log("┌─ Test 4: Large Payload (64KB pattern) ─┐")
             do {
                 let (epA, epB) = try FPCEndpoint.pair()
                 await epA.start()
@@ -447,6 +497,22 @@ struct BPCTestHarness {
                     }
                     log("└→ Sending done marker")
                     try await endpoint.send(FPCMessage(id: .done, payload: Data("unsolicited-complete".utf8)))
+
+                // --- Test 7: Per-message credentials ---
+                case .getMessageCredentials:
+                    log("│  Client wants us to report their per-message credentials")
+                    if let creds = message.senderCredentials {
+                        let response = "ruid=\(creds.realUID),euid=\(creds.effectiveUID),rgid=\(creds.realGID),egid=\(creds.effectiveGID),pid=\(creds.pid),setuid=\(creds.isSetuid),setgid=\(creds.isSetgid)"
+                        log("│  Message credentials: \(response)")
+                        log("└→ Replying with credentials")
+                        try await endpoint.reply(to: message, id: .messageCredentialsReply,
+                            payload: Data(response.utf8))
+                    } else {
+                        log("│  ⚠️  No credentials on message!")
+                        log("└→ Replying with error")
+                        try await endpoint.reply(to: message, id: .messageCredentialsReply,
+                            payload: Data("error:no-credentials".utf8))
+                    }
 
                 // --- Done signal ---
                 case .done:
@@ -745,6 +811,51 @@ struct BPCTestHarness {
                 }
             } catch {
                 log("✗ TEST 5 FAILED: \(error)")
+                failed += 1
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // TEST 6: Per-Message Credentials (LOCAL_CREDS_PERSISTENT)
+            // ══════════════════════════════════════════════════════════════
+            log("")
+            log("┌──────────────────────────────────────────────────────────────┐")
+            log("│ TEST 6: Per-Message Credentials (LOCAL_CREDS_PERSISTENT)     │")
+            log("│ Verifies: Real UID/GID delivered with each message           │")
+            log("│ Unlike LOCAL_PEERCRED: provides real+effective, per-message  │")
+            log("└──────────────────────────────────────────────────────────────┘")
+            do {
+                log("→ Requesting server echo our per-message credentials")
+
+                let reply = try await endpoint.request(
+                    FPCMessage(id: .getMessageCredentials),
+                    timeout: .seconds(5)
+                )
+
+                let replyStr = String(data: reply.payload, encoding: .utf8) ?? "<invalid>"
+                log("← Server sees message credentials: \(replyStr)")
+
+                let myRealUID = getuid()
+                let myEffectiveUID = geteuid()
+                let myRealGID = getgid()
+                let myEffectiveGID = getegid()
+                let myPID = getpid()
+
+                log("  Our process: ruid=\(myRealUID), euid=\(myEffectiveUID), rgid=\(myRealGID), egid=\(myEffectiveGID), pid=\(myPID)")
+
+                if replyStr.contains("ruid=\(myRealUID)") &&
+                   replyStr.contains("euid=\(myEffectiveUID)") &&
+                   replyStr.contains("pid=\(myPID)") {
+                    log("✓ TEST 6 PASSED: Per-message credentials correctly delivered")
+                    passed += 1
+                } else if replyStr.contains("error:no-credentials") {
+                    log("✗ TEST 6 FAILED: No credentials on message (LOCAL_CREDS_PERSISTENT not enabled?)")
+                    failed += 1
+                } else {
+                    log("✗ TEST 6 FAILED: Credential mismatch")
+                    failed += 1
+                }
+            } catch {
+                log("✗ TEST 6 FAILED: \(error)")
                 failed += 1
             }
 

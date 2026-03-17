@@ -234,6 +234,9 @@ public actor FPCEndpoint: Endpoint {
     /// Each endpoint gets its own independent I/O queue to avoid serialization bottlenecks
     /// and potential deadlocks when the endpoints communicate with each other.
     ///
+    /// Both sockets are configured with `LOCAL_CREDS_PERSISTENT` to enable per-message
+    /// credential delivery via `SCM_CREDS2`.
+    ///
     /// - Parameters:
     ///   - firstQueue: Optional custom DispatchQueue for the first endpoint's I/O operations.
     ///                 If `nil`, a default queue is created.
@@ -250,6 +253,11 @@ public actor FPCEndpoint: Endpoint {
             type: [.seqpacket, .cloexec],
             protocol: .default
         )
+
+        // Enable persistent credentials for per-message credential delivery on both ends
+        try socketPair.first.enablePersistentCredentials()
+        try socketPair.second.enablePersistentCredentials()
+
         return (FPCEndpoint(socket: socketPair.first, ioQueue: firstQueue),
                 FPCEndpoint(socket: socketPair.second, ioQueue: secondQueue))
     }
@@ -470,20 +478,43 @@ public actor FPCEndpoint: Endpoint {
         // No buffering needed - the kernel preserves message atomicity.
         let maxBufferSize = FPCFrameLayout.headerSize + Self.MAX_INLINE_PAYLOAD + FPCFrameLayout.trailerSize
 
-        let (wireData, receivedDescriptors) = try socketHolder.withSocketOrThrow { socket in
-            try socket.recvDescriptors(maxDescriptors: FPCFrameLayout.maxDescriptors, bufferSize: maxBufferSize)
+        let result = try socketHolder.withSocketOrThrow { socket in
+            try socket.recvDescriptorsWithCredentials(
+                maxDescriptors: FPCFrameLayout.maxDescriptors,
+                bufferSize: maxBufferSize
+            )
         }
 
         // Check for connection closed (0 bytes)
-        guard wireData.count > 0 else {
+        guard result.data.count > 0 else {
             throw FPCError.disconnected
         }
 
-        return try parseMessage(wireData: wireData, receivedDescriptors: receivedDescriptors)
+        // Convert SocketCredentials to MessageCredentials if present
+        let messageCredentials: MessageCredentials? = result.credentials.map { creds in
+            MessageCredentials(
+                realUID: creds.realUID,
+                effectiveUID: creds.effectiveUID,
+                realGID: creds.realGID,
+                effectiveGID: creds.effectiveGID,
+                pid: creds.pid,
+                groups: creds.groups
+            )
+        }
+
+        return try parseMessage(
+            wireData: result.data,
+            receivedDescriptors: result.descriptors,
+            credentials: messageCredentials
+        )
     }
 
     /// Parses a complete BPC message from wire data.
-    nonisolated private func parseMessage(wireData: Data, receivedDescriptors: [OpaqueDescriptorRef]) throws -> FPCMessage {
+    nonisolated private func parseMessage(
+        wireData: Data,
+        receivedDescriptors: [OpaqueDescriptorRef],
+        credentials: MessageCredentials? = nil
+    ) throws -> FPCMessage {
         guard wireData.count >= FPCFrameLayout.minimumMessageSize else {
             throw FPCError.invalidMessageFormat
         }
@@ -567,7 +598,8 @@ public actor FPCEndpoint: Endpoint {
             id: MessageID(rawValue: header.messageID),
             correlationID: header.correlationID,
             payload: payload,
-            descriptors: descriptors
+            descriptors: descriptors,
+            senderCredentials: credentials
         )
     }
 }

@@ -152,6 +152,9 @@ public actor FPCListener {
 
     /// Accepts the next incoming connection. Suspends until a client connects.
     ///
+    /// The accepted socket is configured with `LOCAL_CREDS_PERSISTENT` to enable
+    /// per-message credential delivery via `SCM_CREDS2`.
+    ///
     /// - Throws: ``FPCError/listenerClosed`` if the listener has been stopped.
     public func accept() async throws -> FPCEndpoint {
         guard state == .running else { throw FPCError.listenerClosed }
@@ -165,6 +168,10 @@ public actor FPCListener {
                         continuation.resume(throwing: FPCError.listenerClosed)
                         return
                     }
+
+                    // Enable persistent credentials for per-message credential delivery
+                    try clientSocket.enablePersistentCredentials()
+
                     continuation.resume(returning: FPCEndpoint(socket: clientSocket))
                 } catch {
                     continuation.resume(throwing: error)

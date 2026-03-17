@@ -59,17 +59,48 @@ public struct FPCMessage: Sendable {
     /// File descriptors delivered alongside the payload over the Unix socket.
     public var descriptors: [OpaqueDescriptorRef]
 
+    /// Credentials of the process that sent this message.
+    ///
+    /// This is populated automatically when receiving messages. FPC enables
+    /// `LOCAL_CREDS_PERSISTENT` on all sockets, which delivers the sender's
+    /// credentials via `SCM_CREDS2` with every message.
+    ///
+    /// Unlike ``FPCEndpoint/getPeerCredentials()`` (which only provides effective
+    /// credentials at connection time), this provides:
+    /// - Real and effective UID/GID
+    /// - Per-message credentials (can detect credential changes)
+    /// - Setuid/setgid detection via `isSetuid`/`isSetgid`
+    ///
+    /// - Note: This is `nil` for locally-constructed messages that
+    ///   haven't been received from a socket.
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// for await message in endpoint.incoming() {
+    ///     if let creds = message.senderCredentials {
+    ///         print("From PID \(creds.pid), real UID \(creds.realUID)")
+    ///         if creds.isSetuid {
+    ///             print("Warning: setuid process")
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    public let senderCredentials: MessageCredentials?
+
     /// Creates a message with explicit field values.
     public init(
         id: MessageID,
         correlationID: UInt64 = 0,
         payload: Data = Data(),
-        descriptors: [OpaqueDescriptorRef] = []
+        descriptors: [OpaqueDescriptorRef] = [],
+        senderCredentials: MessageCredentials? = nil
     ) {
         self.id = id
         self.correlationID = correlationID
         self.payload = payload
         self.descriptors = descriptors
+        self.senderCredentials = senderCredentials
     }
 
     /// Returns a lightweight token for replying to this message.
