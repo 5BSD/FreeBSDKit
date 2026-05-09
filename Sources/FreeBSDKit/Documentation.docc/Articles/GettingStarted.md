@@ -9,7 +9,7 @@ FreeBSDKit is a Swift framework that provides idiomatic APIs for FreeBSD-specifi
 ## Requirements
 
 - FreeBSD 13.0 or later
-- Swift 5.10 or later
+- Swift 6.3 development snapshot or later
 - Root privileges for most operations
 
 ## Adding FreeBSDKit to Your Project
@@ -17,14 +17,14 @@ FreeBSDKit is a Swift framework that provides idiomatic APIs for FreeBSD-specifi
 Add FreeBSDKit as a dependency in your `Package.swift`:
 
 ```swift
-// swift-tools-version: 5.10
+// swift-tools-version: 6.3
 
 import PackageDescription
 
 let package = Package(
     name: "MyApp",
     dependencies: [
-        .package(url: "https://github.com/koryheard/FreeBSDKit", from: "1.0.0")
+        .package(url: "https://github.com/SwiftBSD/FreeBSDKit", from: "0.2.6")
     ],
     targets: [
         .executableTarget(
@@ -32,7 +32,9 @@ let package = Package(
             dependencies: [
                 .product(name: "FreeBSDKit", package: "FreeBSDKit"),
                 .product(name: "Capsicum", package: "FreeBSDKit"),
+                .product(name: "Capabilities", package: "FreeBSDKit"),
                 .product(name: "Descriptors", package: "FreeBSDKit"),
+                .product(name: "Jails", package: "FreeBSDKit"),
             ]
         )
     ]

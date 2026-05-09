@@ -112,13 +112,15 @@ public struct AggregationRecord: Sendable, Equatable {
 extension AggregationRecord {
 
     /// Decode a single `dtrace_aggdata_t *` into an `AggregationRecord`.
-    /// Returns `nil` if the description has no records (which would
-    /// indicate a malformed aggregation that we can't usefully report).
+    /// Returns `nil` if the description does not have the minimum
+    /// record layout DTrace uses for aggregations: record 0 is the
+    /// internal aggregation ID, the final record is the value payload,
+    /// and records 1..<(nrecs-1) are the user-visible key tuple.
     static func decode(from aggdata: UnsafePointer<dtrace_aggdata_t>) -> AggregationRecord? {
         let desc = cdtrace_aggdata_desc(aggdata)
         guard let desc else { return nil }
         let nrecs = Int(cdtrace_aggdesc_nrecs(desc))
-        guard nrecs >= 1 else { return nil }
+        guard nrecs >= 2 else { return nil }
 
         let name: String
         if let cname = cdtrace_aggdesc_name(desc) {
@@ -129,11 +131,12 @@ extension AggregationRecord {
 
         guard let dataBase = cdtrace_aggdata_data(aggdata) else { return nil }
 
-        // The last record is the aggregation value; everything before
-        // it describes the keys.
+        // Record 0 is the libdtrace aggregation ID, not a user key.
+        // The last record is the aggregation value; records 1..<(nrecs-1)
+        // describe the user-visible key tuple.
         var keys: [AggregationKey] = []
-        keys.reserveCapacity(nrecs - 1)
-        for i in 0..<(nrecs - 1) {
+        keys.reserveCapacity(nrecs - 2)
+        for i in 1..<(nrecs - 1) {
             guard let rec = cdtrace_aggdesc_rec(desc, Int32(i)) else { continue }
             keys.append(decodeKey(rec: rec, dataBase: dataBase))
         }
@@ -175,7 +178,7 @@ extension AggregationRecord {
             )
             if let nul = buf.firstIndex(of: 0) {
                 let bytes = Array(buf.prefix(nul))
-                if let str = String(bytes: bytes, encoding: .utf8), !str.isEmpty {
+                if let str = String(bytes: bytes, encoding: .utf8) {
                     return .string(str)
                 }
             }

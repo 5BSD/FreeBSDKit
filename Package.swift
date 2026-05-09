@@ -23,12 +23,20 @@ let package = Package(
             targets: ["Capsicum"]
         ),
         .library(
+            name: "Capabilities",
+            targets: ["Capabilities"]
+        ),
+        .library(
             name: "Capabilites",
-            targets: ["Capsicum"]
+            targets: ["Capabilities"]
         ),
         .library(
             name: "Descriptors",
             targets: ["Descriptors"]
+        ),
+        .library(
+            name: "Jails",
+            targets: ["Jails"]
         ),
         .library(
             name: "SignalDispatchers",

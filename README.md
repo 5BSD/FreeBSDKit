@@ -7,7 +7,7 @@ FreeBSDKit provides idiomatic Swift, C and C++ interfaces to FreeBSD's unique sy
 ## Requirements
 
 - FreeBSD 13.0 or later
-- Swift 6.2 or later
+- Swift 6.3 development snapshot or later
 
 ## Installation
 
@@ -15,7 +15,7 @@ Add FreeBSDKit to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/your/FreeBSDKit", from: "1.0.0")
+    .package(url: "https://github.com/SwiftBSD/FreeBSDKit", from: "0.2.6")
 ]
 ```
 
@@ -26,9 +26,11 @@ Then add the specific libraries you need to your target:
     name: "MyApp",
     dependencies: [
         .product(name: "Capsicum", package: "FreeBSDKit"),
+        .product(name: "Capabilities", package: "FreeBSDKit"),
         .product(name: "Casper", package: "FreeBSDKit"),
         .product(name: "Descriptors", package: "FreeBSDKit"),
         .product(name: "FPC", package: "FreeBSDKit"),
+        .product(name: "Jails", package: "FreeBSDKit"),
         .product(name: "Procctl", package: "FreeBSDKit"),
         .product(name: "ACL", package: "FreeBSDKit"),
         .product(name: "Rctl", package: "FreeBSDKit"),

@@ -417,6 +417,55 @@ struct DTraceSessionTests {
         let _: DBlocksSession.Type = DTraceSession.self
         #expect(true, "Deprecated typealias exists")
     }
+
+    @Test("Session reports not running after exit")
+    func testSessionIsRunningTracksExit() throws {
+        guard getuid() == 0 else {
+            print("Skipping testSessionIsRunningTracksExit: requires root privileges")
+            return
+        }
+
+        var session = try DTraceSession.create()
+        session.add {
+            BEGIN { Exit(0) }
+        }
+
+        try session.start()
+        #expect(session.isRunning == true)
+
+        while session.process() == .okay {
+            session.wait()
+        }
+
+        #expect(session.isRunning == false)
+    }
+
+    @Test("Session snapshot decodes live aggregation rows")
+    func testSessionSnapshotDecodesAggregationRows() throws {
+        guard getuid() == 0 else {
+            print("Skipping testSessionSnapshotDecodesAggregationRows: requires root privileges")
+            return
+        }
+
+        var session = try DTraceSession.create()
+        session.add {
+            BEGIN {
+                Count(by: "65", into: "calls")
+                Exit(0)
+            }
+        }
+
+        try session.start()
+        while session.process() == .okay {
+            session.wait()
+        }
+
+        let records = try session.snapshot()
+        #expect(records.count == 1)
+        #expect(records.first?.name == "calls")
+        #expect(records.first?.keys == [.int(65)])
+        #expect(records.first?.value == .count(1))
+    }
 }
 
 @Suite("DBlocks Module Tests")

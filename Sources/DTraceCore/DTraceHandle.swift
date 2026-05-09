@@ -1019,6 +1019,39 @@ private struct TypedAggregateWalkContext {
     var callback: (DTraceHandle.AggregationRecord) -> DTraceHandle.AggregateWalkResult
 }
 
+func decodeTypedAggregationKey(
+    offset: Int,
+    size: Int,
+    buffer: UnsafeRawPointer
+) -> String {
+    let raw = buffer.advanced(by: offset)
+
+    switch size {
+    case 8:
+        return String(raw.loadUnaligned(as: Int64.self))
+    case 4:
+        return String(Int64(raw.loadUnaligned(as: Int32.self)))
+    case 2:
+        return String(Int64(raw.loadUnaligned(as: Int16.self)))
+    case 1:
+        return String(Int64(raw.load(as: Int8.self)))
+    default:
+        let bytes = UnsafeBufferPointer(
+            start: raw.assumingMemoryBound(to: UInt8.self),
+            count: size
+        )
+
+        if let nul = bytes.firstIndex(of: 0) {
+            let stringBytes = Array(bytes.prefix(nul))
+            if let str = String(bytes: stringBytes, encoding: .utf8) {
+                return str
+            }
+        }
+
+        return "<\(size) bytes>"
+    }
+}
+
 private func typedAggregateWalkCallback(
     _ data: UnsafePointer<dtrace_aggdata_t>?,
     _ arg: UnsafeMutableRawPointer?
@@ -1052,15 +1085,11 @@ private func typedAggregateWalkCallback(
         return DTRACE_AGGWALK_NEXT
     }
 
-    // Parse key tuple: records 0..<(nrecs-1) are key elements.
-    // Each key record describes a region in the data buffer.
-    //
-    // DTrace key records are DTRACEACT_DIFEXPR (action=1). The
-    // data region contains either a null-terminated string or a
-    // raw integer depending on the D expression type. We detect
-    // strings by checking for a printable first byte and a null
-    // terminator within the record bounds. Everything else is
-    // read as an integer.
+    // Parse key tuple: record 0 is the internal aggregation ID,
+    // records 1..<(nrecs-1) are the user key tuple, and the final
+    // record is the aggregation value. Integer-width key records are
+    // decoded as signed values; larger records are treated as bounded
+    // NUL-terminated UTF-8 strings when possible.
     var keys: [String] = []
     for i in 1..<(nrecs - 1) {
         guard let keyRec = cdtrace_aggdesc_rec(desc, Int32(i)) else { continue }
@@ -1068,35 +1097,7 @@ private func typedAggregateWalkCallback(
         let size = Int(cdtrace_recdesc_size(keyRec))
         guard size > 0 else { continue }
 
-        let keyPtr = rawData.advanced(by: offset)
-
-        // Check if this looks like a null-terminated string:
-        // first byte is printable ASCII (0x20..0x7e) and there's
-        // a NUL within the record bounds.
-        let firstByte = UInt8(bitPattern: keyPtr[0])
-        var hasNul = false
-        if firstByte >= 0x20 && firstByte <= 0x7e {
-            for j in 0..<size {
-                if keyPtr[j] == 0 {
-                    hasNul = true
-                    break
-                }
-            }
-        }
-
-        if hasNul {
-            let str = String(cString: keyPtr)
-            keys.append(str)
-        } else if size <= 8 {
-            // Numeric key — read as int64
-            var val: Int64 = 0
-            memcpy(&val, keyPtr, Swift.min(size, 8))
-            keys.append(String(val))
-        } else {
-            // Fallback: try as string anyway
-            let str = String(cString: keyPtr)
-            keys.append(str.isEmpty ? "0" : str)
-        }
+        keys.append(decodeTypedAggregationKey(offset: offset, size: size, buffer: rawData))
     }
 
     // Parse the aggregation value.

@@ -1,11 +1,11 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.3
 
 import PackageDescription
 
 let package = Package(
     name: "MyFreeBSDApp",
     dependencies: [
-        .package(url: "https://github.com/koryheard/FreeBSDKit", from: "1.0.0")
+        .package(url: "https://github.com/SwiftBSD/FreeBSDKit", from: "0.2.6")
     ],
     targets: [
         .executableTarget(

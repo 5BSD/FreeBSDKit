@@ -81,7 +81,7 @@ public struct DTraceSession: ~Copyable {
     /// - Parameter flags: Optional flags for opening the DTrace handle.
     /// - Throws: `DTraceCoreError.openFailed` if the session cannot be created.
     public static func create(flags: DTraceOpenFlags = []) throws -> DTraceSession {
-        var handle = try DTraceHandle.open(flags: flags)
+        let handle = try DTraceHandle.open(flags: flags)
         // Set reasonable defaults (libdtrace defaults are too small)
         try handle.setOption("bufsize", value: "4m")
         try handle.setOption("aggsize", value: "4m")
@@ -280,7 +280,12 @@ public struct DTraceSession: ~Copyable {
 
     /// Whether tracing is still running.
     public var isRunning: Bool {
-        isEnabled && status != .stopped
+        switch status {
+        case .exited, .filled, .stopped:
+            return false
+        case .none, .okay:
+            return isEnabled
+        }
     }
 
     /// Whether JSON structured output is enabled.
@@ -353,15 +358,24 @@ public struct DTraceSession: ~Copyable {
     ///   fails.
     public func snapshot(sorted: Bool = true) throws -> [AggregationRecord] {
         try snapshotAggregations()
-        var records: [AggregationRecord] = []
-        try handle.aggregateWalk(sorted: sorted) { dataPtr, _ in
-            let aggdata = dataPtr.assumingMemoryBound(to: dtrace_aggdata_t.self)
-            if let record = AggregationRecord.decode(from: aggdata) {
-                records.append(record)
+        var context = SnapshotWalkContext(records: [])
+        var result: Int32 = 0
+
+        try handle.withUnsafeHandle { h in
+            result = withUnsafeMutablePointer(to: &context) { ctxPtr in
+                if sorted {
+                    return cdtrace_aggregate_walk_sorted(h, snapshotWalkCallback, ctxPtr)
+                } else {
+                    return cdtrace_aggregate_walk(h, snapshotWalkCallback, ctxPtr)
+                }
             }
-            return .next
         }
-        return records
+
+        if result < 0 {
+            throw DTraceCoreError.aggregateFailed(message: handle.lastErrorMessage)
+        }
+
+        return context.records
     }
 
     // MARK: - Probe Discovery
@@ -437,3 +451,22 @@ public struct DTraceSession: ~Copyable {
 /// Deprecated: Use `DTraceSession` instead.
 @available(*, deprecated, renamed: "DTraceSession")
 public typealias DBlocksSession = DTraceSession
+
+private struct SnapshotWalkContext {
+    var records: [AggregationRecord]
+}
+
+private func snapshotWalkCallback(
+    _ data: UnsafePointer<dtrace_aggdata_t>?,
+    _ arg: UnsafeMutableRawPointer?
+) -> Int32 {
+    guard let data, let arg else {
+        return DTRACE_AGGWALK_NEXT
+    }
+
+    let context = arg.assumingMemoryBound(to: SnapshotWalkContext.self)
+    if let record = AggregationRecord.decode(from: data) {
+        context.pointee.records.append(record)
+    }
+    return DTRACE_AGGWALK_NEXT
+}

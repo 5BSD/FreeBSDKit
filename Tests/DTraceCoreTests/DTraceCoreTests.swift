@@ -354,6 +354,25 @@ struct DTraceHandleTypesTests {
         #expect(result.cpu == 0)
         #expect(result.probe.function == "read")
     }
+
+    @Test("Typed aggregation key decoder sign-extends integer widths")
+    func testDecodeTypedAggregationKeyIntegers() {
+        var buf = [UInt8](repeating: 0, count: 16)
+        buf.withUnsafeMutableBytes { ptr in
+            ptr.storeBytes(of: Int8(-7), toByteOffset: 0, as: Int8.self)
+            ptr.storeBytes(of: Int16(-42), toByteOffset: 2, as: Int16.self)
+            ptr.storeBytes(of: Int32(1000), toByteOffset: 4, as: Int32.self)
+            ptr.storeBytes(of: Int64(65), toByteOffset: 8, as: Int64.self)
+        }
+
+        buf.withUnsafeMutableBufferPointer { ptr in
+            let base = ptr.baseAddress!
+            #expect(decodeTypedAggregationKey(offset: 0, size: 1, buffer: base) == "-7")
+            #expect(decodeTypedAggregationKey(offset: 2, size: 2, buffer: base) == "-42")
+            #expect(decodeTypedAggregationKey(offset: 4, size: 4, buffer: base) == "1000")
+            #expect(decodeTypedAggregationKey(offset: 8, size: 8, buffer: base) == "65")
+        }
+    }
 }
 
 @Suite("DTraceProgramInfo Tests")
@@ -455,5 +474,45 @@ struct DTraceHandleIntegrationTests {
         }
 
         #expect(count == 0)  // No aggregations in this simple program
+    }
+
+    @Test("Typed aggregate walk decodes numeric keys")
+    func testAggregateWalkTypedDecodesNumericKeys() throws {
+        guard getuid() == 0 else {
+            print("Skipping testAggregateWalkTypedDecodesNumericKeys: requires root privileges")
+            return
+        }
+
+        let handle = try DTraceHandle.open()
+        try handle.setOption("bufsize", value: "4m")
+        try handle.setOption("aggsize", value: "4m")
+
+        let program = try handle.compile("""
+            BEGIN {
+                @counts[65] = count();
+                exit(0);
+            }
+            """)
+        try handle.exec(program)
+        try handle.go()
+
+        while handle.poll() == .okay {
+            handle.sleep()
+        }
+
+        try handle.stop()
+        try handle.aggregateSnap()
+
+        var records: [DTraceHandle.AggregationRecord] = []
+        try handle.aggregateWalkTyped { record in
+            records.append(record)
+            return .next
+        }
+
+        #expect(records.count == 1)
+        #expect(records.first?.name == "counts")
+        #expect(records.first?.action == .count)
+        #expect(records.first?.keys == ["65"])
+        #expect(records.first?.value == 1)
     }
 }
