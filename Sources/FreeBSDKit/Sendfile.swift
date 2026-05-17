@@ -20,11 +20,6 @@ public struct SendfileFlags: OptionSet, Sendable {
     /// and prefer to handle busy pages asynchronously.
     public static let noDiskIO = SendfileFlags(rawValue: SF_NODISKIO)
 
-    /// Wait for data to be sent synchronously.
-    ///
-    /// Blocks until the data has been transmitted to the peer.
-    public static let sync = SendfileFlags(rawValue: SF_SYNC)
-
     /// Use exact application-specified readahead value.
     ///
     /// By default, the kernel uses heuristics to determine optimal
